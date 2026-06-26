@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useBudget, MONTHS, fmt, fmtCompact, getSectionTotal, getActualSectionTotal, getActualByCategory, getBudgetValue } from '../store.jsx';
+import { useBudget, MONTHS, fmt, fmtCompact, getSectionTotal, getCatBudgetTotal, getActualSectionTotal, getActualByCategory, getBudgetValue } from '../store.jsx';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement,
   PointElement, ArcElement, Title, Tooltip, Legend, Filler
@@ -24,8 +24,21 @@ const SCALE_DEFAULTS = {
 
 const COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#a78bfa','#06b6d4','#f97316','#ec4899','#84cc16'];
 
+function PeriodToggle({ period, onChange }) {
+  const opts = [{ v: 'month', l: 'Month' }, { v: 'year', l: 'Year' }, { v: 'alltime', l: 'All-Time' }];
+  return (
+    <div className="dash-period-toggle">
+      {opts.map(o => (
+        <button key={o.v} className={`dash-period-btn ${period === o.v ? 'active' : ''}`} onClick={() => onChange(o.v)}>
+          {o.l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ── Burn Rate Rings (SVG) ── */
-function BurnRateRings({ income, budget, currency }) {
+function BurnRateRings({ budget, currency }) {
   const { actualInc, budgetInc, actualExp, budgetExp, actualSav, budgetSav } = budget;
   const size = 200;
   const cx = 100;
@@ -211,8 +224,8 @@ function SavingsForecast({ transactions, year, savCats, currency }) {
 }
 
 export default function Dashboard() {
-  const { state } = useBudget();
-  const { budget, transactions, categories, settings, selectedYear, selectedMonth } = state;
+  const { state, dispatch } = useBudget();
+  const { budget, transactions, categories, settings, selectedYear, selectedMonth, dashboardPeriod } = state;
   const { currency } = settings;
   const year = selectedYear;
   const month = selectedMonth;
@@ -220,14 +233,43 @@ export default function Dashboard() {
   const expCats = categories.expense;
   const savCats = categories.savings;
 
-  const budgetInc = getSectionTotal(budget, year, incCats, month);
-  const budgetExp = getSectionTotal(budget, year, expCats, month);
-  const budgetSav = getSectionTotal(budget, year, savCats, month);
-  const toAllocate = budgetInc - budgetExp - budgetSav;
+  // Compute actuals and budgets based on selected period
+  const periodData = useMemo(() => {
+    if (dashboardPeriod === 'month') {
+      return {
+        actualInc: getActualSectionTotal(transactions, year, month, incCats),
+        actualExp: getActualSectionTotal(transactions, year, month, expCats),
+        actualSav: getActualSectionTotal(transactions, year, month, savCats),
+        budgetInc: getSectionTotal(budget, year, incCats, month),
+        budgetExp: getSectionTotal(budget, year, expCats, month),
+        budgetSav: getSectionTotal(budget, year, savCats, month),
+        label: `${MONTHS[month]} ${year}`,
+      };
+    } else if (dashboardPeriod === 'year') {
+      const budgetInc = incCats.reduce((s, c) => s + getCatBudgetTotal(budget, year, c.id), 0);
+      const budgetExp = expCats.reduce((s, c) => s + getCatBudgetTotal(budget, year, c.id), 0);
+      const budgetSav = savCats.reduce((s, c) => s + getCatBudgetTotal(budget, year, c.id), 0);
+      return {
+        actualInc: getActualSectionTotal(transactions, year, null, incCats),
+        actualExp: getActualSectionTotal(transactions, year, null, expCats),
+        actualSav: getActualSectionTotal(transactions, year, null, savCats),
+        budgetInc, budgetExp, budgetSav,
+        label: String(year),
+      };
+    } else {
+      // All-time
+      const actualInc = transactions.filter(t => incCats.some(c => c.id === t.catId)).reduce((s, t) => s + t.amount, 0);
+      const actualExp = transactions.filter(t => expCats.some(c => c.id === t.catId)).reduce((s, t) => s + t.amount, 0);
+      const actualSav = transactions.filter(t => savCats.some(c => c.id === t.catId)).reduce((s, t) => s + t.amount, 0);
+      return {
+        actualInc, actualExp, actualSav,
+        budgetInc: 0, budgetExp: 0, budgetSav: 0,
+        label: 'All-Time',
+      };
+    }
+  }, [dashboardPeriod, year, month, transactions, budget, incCats, expCats, savCats]);
 
-  const actualInc = getActualSectionTotal(transactions, year, month, incCats);
-  const actualExp = getActualSectionTotal(transactions, year, month, expCats);
-  const actualSav = getActualSectionTotal(transactions, year, month, savCats);
+  const { actualInc, actualExp, actualSav, budgetInc, budgetExp, budgetSav, label } = periodData;
   const netBalance = actualInc - actualExp - actualSav;
 
   const savingsRate = actualInc > 0
@@ -236,17 +278,33 @@ export default function Dashboard() {
       : ((actualInc - actualExp) / actualInc) * 100)
     : 0;
 
-  // Bar: budget vs actual per expense category
+  const toAllocate = dashboardPeriod !== 'alltime' ? (budgetInc - budgetExp - budgetSav) : null;
+
+  // Bar: budget vs actual per expense category (month or year mode)
   const topExpCats = expCats.slice(0, 8);
-  const barData = {
+  const barData = useMemo(() => ({
     labels: topExpCats.map(c => c.name.length > 12 ? c.name.slice(0, 12) + '…' : c.name),
     datasets: [
-      { label: 'Budget', data: topExpCats.map(c => getBudgetValue(budget, year, c.id, month)), backgroundColor: 'rgba(96,165,250,0.5)', borderRadius: 4 },
-      { label: 'Actual', data: topExpCats.map(c => getActualByCategory(transactions, year, month, c.id)), backgroundColor: 'rgba(248,113,113,0.6)', borderRadius: 4 },
+      {
+        label: 'Budget',
+        data: topExpCats.map(c => dashboardPeriod === 'month'
+          ? getBudgetValue(budget, year, c.id, month)
+          : dashboardPeriod === 'year' ? getCatBudgetTotal(budget, year, c.id) : 0),
+        backgroundColor: 'rgba(96,165,250,0.5)',
+        borderRadius: 4,
+      },
+      {
+        label: 'Actual',
+        data: topExpCats.map(c => dashboardPeriod === 'alltime'
+          ? getActualByCategory(transactions, null, null, c.id)
+          : getActualByCategory(transactions, year, dashboardPeriod === 'month' ? month : null, c.id)),
+        backgroundColor: 'rgba(248,113,113,0.6)',
+        borderRadius: 4,
+      },
     ],
-  };
+  }), [dashboardPeriod, year, month, topExpCats, budget, transactions]);
 
-  // Line: monthly trend
+  // Line: monthly trend for current year
   const lineData = {
     labels: MONTHS,
     datasets: [
@@ -257,11 +315,18 @@ export default function Dashboard() {
   };
 
   // Doughnut
-  const doughnutCats = expCats.filter(c => getActualByCategory(transactions, year, month, c.id) > 0);
+  const doughnutCats = expCats.filter(c => {
+    const val = dashboardPeriod === 'alltime'
+      ? getActualByCategory(transactions, null, null, c.id)
+      : getActualByCategory(transactions, year, dashboardPeriod === 'month' ? month : null, c.id);
+    return val > 0;
+  });
   const doughnutData = {
     labels: doughnutCats.map(c => c.name),
     datasets: [{
-      data: doughnutCats.map(c => getActualByCategory(transactions, year, month, c.id)),
+      data: doughnutCats.map(c => dashboardPeriod === 'alltime'
+        ? getActualByCategory(transactions, null, null, c.id)
+        : getActualByCategory(transactions, year, dashboardPeriod === 'month' ? month : null, c.id)),
       backgroundColor: COLORS.slice(0, doughnutCats.length),
       borderColor: 'rgba(0,0,0,0.3)',
       borderWidth: 2,
@@ -293,22 +358,30 @@ export default function Dashboard() {
 
   return (
     <div className="page-body">
+      {/* Period toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <PeriodToggle period={dashboardPeriod} onChange={p => dispatch({ type: 'SET_DASHBOARD_PERIOD', period: p })} />
+        {dashboardPeriod !== 'alltime' && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Viewing: <strong style={{ color: 'var(--text-secondary)' }}>{label}</strong></span>
+        )}
+      </div>
+
       {/* KPI tiles */}
       <div className="kpi-grid">
         <div className="kpi-card green">
           <div className="kpi-label">Income</div>
           <div className="kpi-value">{fmtCompact(actualInc, currency)}</div>
-          <div className="kpi-sub">Budget: {fmtCompact(budgetInc, currency)}</div>
+          <div className="kpi-sub">{budgetInc > 0 ? `Budget: ${fmtCompact(budgetInc, currency)}` : label}</div>
         </div>
         <div className="kpi-card red">
           <div className="kpi-label">Expenses</div>
           <div className="kpi-value">{fmtCompact(actualExp, currency)}</div>
-          <div className="kpi-sub">Budget: {fmtCompact(budgetExp, currency)}</div>
+          <div className="kpi-sub">{budgetExp > 0 ? `Budget: ${fmtCompact(budgetExp, currency)}` : label}</div>
         </div>
         <div className="kpi-card blue">
           <div className="kpi-label">Savings</div>
           <div className="kpi-value">{fmtCompact(actualSav, currency)}</div>
-          <div className="kpi-sub">Budget: {fmtCompact(budgetSav, currency)}</div>
+          <div className="kpi-sub">{budgetSav > 0 ? `Budget: ${fmtCompact(budgetSav, currency)}` : label}</div>
         </div>
         <div className={`kpi-card ${savingsRate >= 15 ? 'green' : 'yellow'}`}>
           <div className="kpi-label">Savings Rate</div>
@@ -320,20 +393,54 @@ export default function Dashboard() {
           <div className={`kpi-value ${netBalance >= 0 ? 'kpi-positive' : 'kpi-negative'}`}>{fmtCompact(netBalance, currency)}</div>
           <div className="kpi-sub">inc − exp − sav</div>
         </div>
-        <div className={`kpi-card ${Math.abs(toAllocate) < 1 ? 'green' : toAllocate > 0 ? 'yellow' : 'red'}`}>
-          <div className="kpi-label">To Allocate</div>
-          <div className={`kpi-value ${Math.abs(toAllocate) < 1 ? 'kpi-positive' : toAllocate > 0 ? '' : 'kpi-negative'}`}>
-            {Math.abs(toAllocate) < 1 ? '✓ $0' : fmtCompact(toAllocate, currency)}
+        {toAllocate !== null ? (
+          <div className={`kpi-card ${Math.abs(toAllocate) < 1 ? 'green' : toAllocate > 0 ? 'yellow' : 'red'}`}>
+            <div className="kpi-label">To Allocate</div>
+            <div className={`kpi-value ${Math.abs(toAllocate) < 1 ? 'kpi-positive' : toAllocate > 0 ? '' : 'kpi-negative'}`}>
+              {Math.abs(toAllocate) < 1 ? '✓ $0' : fmtCompact(toAllocate, currency)}
+            </div>
+            <div className="kpi-sub">{Math.abs(toAllocate) < 1 ? 'Zero-based achieved!' : toAllocate > 0 ? 'Unallocated' : 'Over-allocated'}</div>
           </div>
-          <div className="kpi-sub">{Math.abs(toAllocate) < 1 ? 'Zero-based achieved!' : toAllocate > 0 ? 'Unallocated' : 'Over-allocated'}</div>
-        </div>
+        ) : (
+          <div className="kpi-card purple">
+            <div className="kpi-label">Total Transactions</div>
+            <div className="kpi-value" style={{ fontSize: 22 }}>{transactions.length}</div>
+            <div className="kpi-sub">across all time</div>
+          </div>
+        )}
       </div>
 
       {/* Burn rate rings + trend chart */}
       <div className="charts-grid">
         <div className="chart-card">
-          <div className="chart-title">Monthly Burn Rate — {MONTHS[month]} {year}</div>
-          <BurnRateRings budget={burnBudget} currency={currency} />
+          <div className="chart-title">
+            {dashboardPeriod === 'alltime' ? 'Income vs Expense vs Savings' : `Burn Rate — ${label}`}
+          </div>
+          {dashboardPeriod !== 'alltime' ? (
+            <BurnRateRings budget={burnBudget} currency={currency} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
+              {[
+                { label: 'Income',   value: actualInc, color: '#34d399' },
+                { label: 'Expenses', value: actualExp, color: '#f87171' },
+                { label: 'Savings',  value: actualSav, color: '#60a5fa' },
+              ].map(item => {
+                const total = actualInc + actualExp + actualSav;
+                const pct = total > 0 ? (item.value / total) * 100 : 0;
+                return (
+                  <div key={item.label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 12 }}>
+                      <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{item.label}</span>
+                      <span style={{ color: item.color, fontWeight: 700 }}>{fmtCompact(item.value, currency)}</span>
+                    </div>
+                    <div style={{ height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: item.color, borderRadius: 4, transition: 'width 0.8s ease' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="chart-card">
           <div className="chart-title">Monthly Trend — {year}</div>
@@ -346,16 +453,16 @@ export default function Dashboard() {
       {/* Budget vs Actual bar + doughnut */}
       <div className="charts-grid">
         <div className="chart-card">
-          <div className="chart-title">Budget vs Actual Expenses — {MONTHS[month]}</div>
+          <div className="chart-title">Expenses by Category — {label}</div>
           <div style={{ height: 220 }}>
             <Bar data={barData} options={scaleOpts} />
           </div>
         </div>
         <div className="chart-card">
-          <div className="chart-title">Expense Breakdown — {MONTHS[month]}</div>
+          <div className="chart-title">Expense Breakdown — {label}</div>
           {doughnutCats.length === 0 ? (
             <div className="empty-state" style={{ padding: '30px 0' }}>
-              <span style={{ fontSize: 13 }}>No expense transactions this month</span>
+              <span style={{ fontSize: 13 }}>No expense transactions</span>
             </div>
           ) : (
             <div style={{ height: 220, display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -364,7 +471,9 @@ export default function Dashboard() {
               </div>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, overflow: 'hidden' }}>
                 {doughnutCats.slice(0, 7).map((cat, i) => {
-                  const val = getActualByCategory(transactions, year, month, cat.id);
+                  const val = dashboardPeriod === 'alltime'
+                    ? getActualByCategory(transactions, null, null, cat.id)
+                    : getActualByCategory(transactions, year, dashboardPeriod === 'month' ? month : null, cat.id);
                   const pct = actualExp > 0 ? (val / actualExp * 100).toFixed(0) : 0;
                   return (
                     <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12 }}>
@@ -380,8 +489,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Savings forecast */}
-      <SavingsForecast transactions={transactions} year={year} savCats={savCats} currency={currency} />
+      {/* Savings forecast (month/year mode only) */}
+      {dashboardPeriod !== 'alltime' && (
+        <SavingsForecast transactions={transactions} year={year} savCats={savCats} currency={currency} />
+      )}
 
       {/* Recent transactions */}
       <div className="chart-card">

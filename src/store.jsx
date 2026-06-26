@@ -42,17 +42,24 @@ function defaultState() {
       savingsRateMode: 'savings',
       shiftLateIncome: false,
       shiftDay: 20,
-      password: '',
+      pin: '',
       theme: 'dark',
+      paycheckConfig: {
+        amount: 0,
+        incomeCatId: '',
+        allocations: [],
+      },
     },
     categories: makeDefaultCategories(),
     budget: {},
     transactions: [],
     subscriptions: [],
+    portfolio: [],
     currentView: 'dashboard',
     selectedYear: new Date().getFullYear(),
     selectedMonth: new Date().getMonth(),
     isAuthenticated: false,
+    dashboardPeriod: 'month',
   };
 }
 
@@ -62,13 +69,34 @@ function loadState() {
     if (!raw) return defaultState();
     const saved = JSON.parse(raw);
     const def = defaultState();
+
+    const savedSettings = saved.settings || {};
+    const mergedSettings = {
+      ...def.settings,
+      ...savedSettings,
+      paycheckConfig: {
+        ...def.settings.paycheckConfig,
+        ...(savedSettings.paycheckConfig || {}),
+        allocations: (savedSettings.paycheckConfig?.allocations) || [],
+      },
+    };
+
+    // Migrate password → pin
+    if (savedSettings.password && !savedSettings.pin) {
+      mergedSettings.pin = savedSettings.password;
+    }
+    delete mergedSettings.password;
+
     return {
       ...def,
       ...saved,
+      settings: mergedSettings,
+      portfolio: saved.portfolio || [],
       currentView: 'dashboard',
       selectedYear: saved.selectedYear || def.selectedYear,
       selectedMonth: saved.selectedMonth !== undefined ? saved.selectedMonth : def.selectedMonth,
       isAuthenticated: false,
+      dashboardPeriod: 'month',
     };
   } catch {
     return defaultState();
@@ -76,7 +104,7 @@ function loadState() {
 }
 
 function saveState(state) {
-  const { currentView, isAuthenticated, ...persist } = state;
+  const { currentView, isAuthenticated, dashboardPeriod, ...persist } = state;
   localStorage.setItem('budgetmanager_v1', JSON.stringify(persist));
 }
 
@@ -88,6 +116,8 @@ function reducer(state, action) {
       return { ...state, selectedYear: action.year };
     case 'SET_MONTH':
       return { ...state, selectedMonth: action.month };
+    case 'SET_DASHBOARD_PERIOD':
+      return { ...state, dashboardPeriod: action.period };
     case 'AUTHENTICATE':
       return { ...state, isAuthenticated: true };
     case 'TOGGLE_THEME': {
@@ -117,11 +147,35 @@ function reducer(state, action) {
       cats[section] = cats[section].filter(c => c.id !== id);
       return { ...state, categories: cats };
     }
+    case 'DELETE_CATEGORY_WITH_REASSIGN': {
+      const { section, id, reassignTo } = action;
+      const cats = JSON.parse(JSON.stringify(state.categories));
+      cats[section] = cats[section].filter(c => c.id !== id);
+      let txs = state.transactions;
+      if (reassignTo) {
+        txs = txs.map(tx => tx.catId === id ? { ...tx, catId: reassignTo } : tx);
+      } else {
+        txs = txs.filter(tx => tx.catId !== id);
+      }
+      const subs = state.subscriptions.map(s => s.catId === id ? { ...s, catId: reassignTo || '' } : s);
+      return { ...state, categories: cats, transactions: txs, subscriptions: subs };
+    }
     case 'RENAME_CATEGORY': {
       const { section, id, name } = action;
       const cats = JSON.parse(JSON.stringify(state.categories));
       const cat = cats[section].find(c => c.id === id);
       if (cat) cat.name = name;
+      return { ...state, categories: cats };
+    }
+    case 'REORDER_CATEGORY': {
+      const { section, id, direction } = action;
+      const cats = JSON.parse(JSON.stringify(state.categories));
+      const arr = cats[section];
+      const idx = arr.findIndex(c => c.id === id);
+      if (idx < 0) return state;
+      const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= arr.length) return state;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
       return { ...state, categories: cats };
     }
     case 'ADD_TRANSACTION': {
@@ -166,6 +220,42 @@ function reducer(state, action) {
       );
       return { ...state, transactions: [tx, ...state.transactions], subscriptions };
     }
+    case 'POST_PAYCHECK': {
+      const { date, incomeCatId, amount, allocations } = action;
+      const now = Date.now();
+      const newTxs = [];
+      newTxs.push({
+        id: now.toString(),
+        date,
+        type: 'income',
+        catId: incomeCatId,
+        amount: parseFloat(amount) || 0,
+        details: 'Paycheck',
+        flagged: false,
+      });
+      allocations.forEach((alloc, i) => {
+        if (alloc.amount > 0 && alloc.catId) {
+          newTxs.push({
+            id: (now + i + 1).toString(),
+            date,
+            type: alloc.type,
+            catId: alloc.catId,
+            amount: parseFloat(alloc.amount) || 0,
+            details: `Paycheck — ${alloc.label}`,
+            flagged: false,
+          });
+        }
+      });
+      return { ...state, transactions: [...newTxs, ...state.transactions] };
+    }
+    case 'ADD_HOLDING': {
+      const holding = { ...action.holding, id: Date.now().toString(), price: 0, lastUpdated: null };
+      return { ...state, portfolio: [...state.portfolio, holding] };
+    }
+    case 'UPDATE_HOLDING':
+      return { ...state, portfolio: state.portfolio.map(h => h.id === action.holding.id ? { ...h, ...action.holding } : h) };
+    case 'DELETE_HOLDING':
+      return { ...state, portfolio: state.portfolio.filter(h => h.id !== action.id) };
     default:
       return state;
   }
@@ -233,9 +323,14 @@ export function getTransactionsByYear(transactions, year) {
 }
 
 export function getActualByCategory(transactions, year, month, catId) {
-  const txs = month !== null
-    ? getTransactionsByMonth(transactions, year, month)
-    : getTransactionsByYear(transactions, year);
+  let txs;
+  if (year === null) {
+    txs = transactions;
+  } else if (month !== null) {
+    txs = getTransactionsByMonth(transactions, year, month);
+  } else {
+    txs = getTransactionsByYear(transactions, year);
+  }
   return txs.filter(tx => tx.catId === catId).reduce((s, tx) => s + tx.amount, 0);
 }
 
@@ -243,6 +338,29 @@ export function getActualSectionTotal(transactions, year, month, cats) {
   let total = 0;
   for (const cat of cats) total += getActualByCategory(transactions, year, month, cat.id);
   return total;
+}
+
+export async function fetchExchangeRates() {
+  try {
+    const res = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    return data.rates;
+  } catch {
+    return { USD: 1, CAD: 1.36, KRW: 1350, EUR: 0.92, GBP: 0.79, JPY: 149, AUD: 1.53, CHF: 0.9, INR: 83, BRL: 5.0, MXN: 17, SGD: 1.34 };
+  }
+}
+
+export async function fetchStockPrice(ticker) {
+  try {
+    const url = `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    return data?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function isSubPaidThisCycle(sub) {

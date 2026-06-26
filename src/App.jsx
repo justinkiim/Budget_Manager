@@ -6,11 +6,12 @@ import Transactions from './components/Transactions';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
 import Subscriptions from './components/Subscriptions';
+import Portfolio from './components/Portfolio';
 import Login from './components/Login';
 import {
   LayoutDashboard, CalendarDays, Receipt, BarChart3,
   Settings as SettingsIcon, DollarSign, ChevronLeft, ChevronRight,
-  Menu, X, Sun, Moon, CreditCard
+  Menu, X, Sun, Moon, CreditCard, TrendingUp
 } from 'lucide-react';
 
 const VIEWS = [
@@ -18,6 +19,7 @@ const VIEWS = [
   { id: 'planning',      label: 'Budget Planning',  icon: CalendarDays    },
   { id: 'transactions',  label: 'Transactions',     icon: Receipt         },
   { id: 'subscriptions', label: 'Subscriptions',    icon: CreditCard      },
+  { id: 'portfolio',     label: 'Portfolio',        icon: TrendingUp      },
   { id: 'reports',       label: 'Reports',          icon: BarChart3       },
 ];
 
@@ -71,6 +73,7 @@ const PAGE_SUBTITLES = {
   planning:      'Set monthly allocations — aim for zero remaining',
   transactions:  'Log and track all income, expenses & savings',
   subscriptions: 'Manage recurring payments — auto-log when paid',
+  portfolio:     'Track investment holdings & live market prices',
   reports:       'Annual analysis & category breakdowns',
 };
 
@@ -83,7 +86,7 @@ function AppInner() {
     document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
   }, [settings.theme]);
 
-  const needsAuth = settings.password && settings.password.trim() !== '' && !isAuthenticated;
+  const needsAuth = settings.pin && settings.pin.trim() !== '' && !isAuthenticated;
   if (needsAuth) return <Login />;
 
   const view = VIEWS.find(v => v.id === currentView) || VIEWS[0];
@@ -166,6 +169,7 @@ function AppInner() {
         {currentView === 'planning'      && <BudgetPlanning />}
         {currentView === 'transactions'  && <Transactions />}
         {currentView === 'subscriptions' && <Subscriptions />}
+        {currentView === 'portfolio'     && <Portfolio />}
         {currentView === 'reports'       && <Reports />}
         {currentView === 'settings'      && <Settings />}
       </main>

@@ -979,3 +979,143 @@ a { color: inherit; text-decoration: none; }
   .kpi-value { font-size: 20px; }
   .grid-2 { grid-template-columns: 1fr; }
 }
+
+/* ─── PIN Pad ─── */
+.pin-card { max-width: 340px; text-align: center; }
+
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 24px 0 8px;
+}
+
+.pin-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: transparent;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.pin-dot.filled {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 12px rgba(96,165,250,0.6);
+}
+
+.pin-error {
+  font-size: 12.5px;
+  color: var(--accent-red);
+  min-height: 20px;
+  margin-bottom: 16px;
+}
+
+.pin-keypad {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 auto;
+  max-width: 240px;
+}
+
+.pin-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.pin-key {
+  width: 68px; height: 58px;
+  border-radius: 14px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  transition: all 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pin-key:hover:not(:disabled) { background: var(--glass-hover); border-color: var(--border-strong); transform: scale(1.04); }
+.pin-key:active:not(:disabled) { transform: scale(0.96); }
+[data-theme="light"] .pin-key { background: rgba(255,255,255,0.7); }
+
+.pin-key-del {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.pin-key-del:hover { color: var(--accent-red); background: rgba(248,113,113,0.1); }
+
+.pin-key-ok {
+  background: rgba(96,165,250,0.15);
+  border-color: rgba(96,165,250,0.3);
+  color: var(--accent-blue);
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+.pin-key-ok:hover:not(:disabled) { background: rgba(96,165,250,0.25); }
+.pin-key-ok:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ─── Dashboard period toggle ─── */
+.dash-period-toggle {
+  display: inline-flex;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+}
+
+.dash-period-btn {
+  padding: 7px 18px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+}
+.dash-period-btn:last-child { border-right: none; }
+.dash-period-btn:hover { background: var(--glass-hover); color: var(--text-primary); }
+.dash-period-btn.active { background: rgba(96,165,250,0.15); color: var(--accent-blue); }
+
+/* ─── Multi-currency badge ─── */
+.fx-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(167,139,250,0.12);
+  color: var(--accent-purple);
+  letter-spacing: 0.03em;
+}
+
+/* ─── Post Paycheck button ─── */
+.btn-paycheck {
+  background: rgba(251,191,36,0.12);
+  color: var(--accent-yellow);
+  border: 1px solid rgba(251,191,36,0.25);
+  backdrop-filter: blur(8px);
+}
+.btn-paycheck:hover { background: rgba(251,191,36,0.22); border-color: rgba(251,191,36,0.4); box-shadow: 0 2px 12px rgba(251,191,36,0.2); }
+
+/* ─── Category reorder buttons ─── */
+.reorder-btn {
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.reorder-btn:hover:not(:disabled) { background: rgba(96,165,250,0.15); color: var(--accent-blue); }
+.reorder-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+/* ─── Spin animation (portfolio refresh) ─── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

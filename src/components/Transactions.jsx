@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
-import { useBudget, MONTHS, fmt } from '../store.jsx';
-import { Plus, Search, Trash2, Pencil, X, ChevronDown, Flag } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useBudget, MONTHS, fmt, fetchExchangeRates } from '../store.jsx';
+import { Plus, Search, Trash2, Pencil, X, ChevronDown, Flag, Zap } from 'lucide-react';
 
 const TYPES = [
   { value: 'income',  label: 'Income'  },
@@ -8,11 +8,25 @@ const TYPES = [
   { value: 'savings', label: 'Savings' },
 ];
 
-function TransactionModal({ tx, categories, onClose, onSave }) {
+const CURRENCIES = [
+  { code: 'USD', symbol: '$',  name: 'US Dollar'       },
+  { code: 'CAD', symbol: 'CA$', name: 'Canadian Dollar' },
+  { code: 'KRW', symbol: '₩',  name: 'Korean Won'      },
+  { code: 'EUR', symbol: '€',  name: 'Euro'             },
+  { code: 'GBP', symbol: '£',  name: 'British Pound'   },
+  { code: 'JPY', symbol: '¥',  name: 'Japanese Yen'    },
+];
+
+function TransactionModal({ tx, categories, settings, onClose, onSave }) {
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState(tx || {
     date: today, type: 'expense', catId: '', amount: '', details: '', flagged: false,
+    txCurrency: 'USD', originalAmount: '', originalCurrency: 'USD',
   });
+  const [rates, setRates] = useState(null);
+  const [fetchingRates, setFetchingRates] = useState(false);
+
+  const baseCurrency = settings.currency;
 
   const catsByType = useMemo(() => ({
     income:  categories.income,
@@ -28,12 +42,46 @@ function TransactionModal({ tx, categories, onClose, onSave }) {
     });
   }
 
+  // When currency changes to non-USD, fetch rates
+  useEffect(() => {
+    if (form.txCurrency !== 'USD' && !rates) {
+      setFetchingRates(true);
+      fetchExchangeRates().then(r => { setRates(r); setFetchingRates(false); });
+    }
+  }, [form.txCurrency, rates]);
+
+  // When originalAmount or currency changes, compute USD equivalent
+  const usdEquivalent = useMemo(() => {
+    if (form.txCurrency === 'USD') return null;
+    if (!form.originalAmount || !rates) return null;
+    const rate = rates[form.txCurrency];
+    if (!rate) return null;
+    return parseFloat(form.originalAmount) / rate;
+  }, [form.txCurrency, form.originalAmount, rates]);
+
   function submit(e) {
     e.preventDefault();
-    if (!form.date || !form.catId || !form.amount) return;
-    onSave({ ...form, amount: parseFloat(form.amount) });
+    if (!form.date || !form.catId) return;
+
+    let amount, originalAmount, originalCurrency;
+    if (form.txCurrency === 'USD') {
+      if (!form.amount) return;
+      amount = parseFloat(form.amount);
+      originalAmount = null;
+      originalCurrency = null;
+    } else {
+      if (!form.originalAmount) return;
+      if (usdEquivalent === null) return;
+      amount = usdEquivalent;
+      originalAmount = parseFloat(form.originalAmount);
+      originalCurrency = form.txCurrency;
+    }
+
+    onSave({ ...form, amount, originalAmount: originalAmount || undefined, originalCurrency: originalCurrency || undefined });
     onClose();
   }
+
+  const txCur = CURRENCIES.find(c => c.code === form.txCurrency) || CURRENCIES[0];
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -55,10 +103,31 @@ function TransactionModal({ tx, categories, onClose, onSave }) {
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Amount *</label>
-              <input className="form-input" type="number" min="0" step="any" placeholder="0.00" value={form.amount} onChange={e => set('amount', e.target.value)} required />
+              <label className="form-label">Currency</label>
+              <select className="form-select" value={form.txCurrency} onChange={e => set('txCurrency', e.target.value)}>
+                {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+              </select>
             </div>
           </div>
+
+          {form.txCurrency === 'USD' ? (
+            <div className="form-group">
+              <label className="form-label">Amount ({baseCurrency}) *</label>
+              <input className="form-input" type="number" min="0" step="any" placeholder="0.00" value={form.amount} onChange={e => set('amount', e.target.value)} required />
+            </div>
+          ) : (
+            <div className="form-group">
+              <label className="form-label">Amount ({form.txCurrency}) *</label>
+              <input className="form-input" type="number" min="0" step="any" placeholder={`0.00 ${form.txCurrency}`} value={form.originalAmount} onChange={e => set('originalAmount', e.target.value)} required />
+              {fetchingRates && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Fetching exchange rate…</span>}
+              {usdEquivalent !== null && (
+                <span style={{ fontSize: 12, color: 'var(--accent-blue)' }}>
+                  ≈ {baseCurrency}{usdEquivalent.toFixed(2)} USD
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="form-group">
             <label className="form-label">Category *</label>
             <select className="form-select" value={form.catId} onChange={e => set('catId', e.target.value)} required>
@@ -71,7 +140,6 @@ function TransactionModal({ tx, categories, onClose, onSave }) {
             <input className="form-input" placeholder="e.g. Netflix, Rent, Salary…" value={form.details} onChange={e => set('details', e.target.value)} />
           </div>
 
-          {/* Flag for Review */}
           <button
             type="button"
             className={`flag-toggle ${form.flagged ? 'flagged' : ''}`}
@@ -92,12 +160,149 @@ function TransactionModal({ tx, categories, onClose, onSave }) {
   );
 }
 
+/* ── Post Paycheck Modal ── */
+function PaycheckModal({ categories, settings, onClose, onPost }) {
+  const { paycheckConfig, currency } = settings;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [date, setDate] = useState(today);
+  const [amount, setAmount] = useState(paycheckConfig.amount ? String(paycheckConfig.amount) : '');
+  const [incomeCatId, setIncomeCatId] = useState(paycheckConfig.incomeCatId || '');
+  const [allocs, setAllocs] = useState(
+    paycheckConfig.allocations.map(a => ({
+      ...a,
+      amount: paycheckConfig.amount && a.pct ? ((paycheckConfig.amount * a.pct) / 100).toFixed(2) : '',
+    }))
+  );
+
+  const parsedAmount = parseFloat(amount) || 0;
+
+  // Recompute allocation amounts when paycheck amount changes
+  useEffect(() => {
+    setAllocs(prev => prev.map(a => ({
+      ...a,
+      amount: a.pct && parsedAmount ? ((parsedAmount * a.pct) / 100).toFixed(2) : a.amount,
+    })));
+  }, [amount]);
+
+  function setAllocAmount(idx, val) {
+    setAllocs(prev => prev.map((a, i) => i === idx ? { ...a, amount: val } : a));
+  }
+
+  function submit(e) {
+    e.preventDefault();
+    if (!incomeCatId || !amount) return;
+    onPost({
+      date,
+      incomeCatId,
+      amount: parsedAmount,
+      allocations: allocs.map(a => ({
+        catId: a.catId,
+        type: a.type,
+        label: a.label || categories[a.type]?.find(c => c.id === a.catId)?.name || '',
+        amount: parseFloat(a.amount) || 0,
+      })).filter(a => a.amount > 0 && a.catId),
+    });
+    onClose();
+  }
+
+  const allCats = [...categories.income, ...categories.expense, ...categories.savings];
+  const totalAllocated = allocs.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 'min(520px,100%)' }}>
+        <div className="modal-title">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Zap size={16} style={{ color: 'var(--accent-yellow)' }} />
+            Post Paycheck
+          </div>
+          <button className="delete-btn" onClick={onClose}><X size={16} /></button>
+        </div>
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="grid-2">
+            <div className="form-group">
+              <label className="form-label">Date</label>
+              <input className="form-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Paycheck Amount *</label>
+              <input className="form-input" type="number" min="0" step="any" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} required autoFocus />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Income Category *</label>
+            <select className="form-select" value={incomeCatId} onChange={e => setIncomeCatId(e.target.value)} required>
+              <option value="">Select income category…</option>
+              {categories.income.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {allocs.length > 0 && (
+            <div>
+              <div className="form-label" style={{ marginBottom: 8 }}>Allocations</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {allocs.map((a, i) => {
+                  const cat = allCats.find(c => c.id === a.catId);
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>
+                        <span className={`badge badge-${a.type}`} style={{ marginRight: 6 }}>{a.type}</span>
+                        {cat?.name || a.label || 'Unknown'}
+                        {a.pct > 0 && <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>({a.pct}%)</span>}
+                      </div>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        style={{ width: 110, textAlign: 'right' }}
+                        value={a.amount}
+                        onChange={e => setAllocAmount(i, e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {parsedAmount > 0 && (
+                <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Allocated: </span>
+                  <strong style={{ color: totalAllocated > parsedAmount ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                    {currency}{totalAllocated.toFixed(2)}
+                  </strong>
+                  <span style={{ color: 'var(--text-muted)' }}> / {currency}{parsedAmount.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {allocs.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+              Configure paycheck allocations in Settings → Paycheck Config to pre-fill distributions.
+            </div>
+          )}
+
+          <div className="modal-footer">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" style={{ background: 'rgba(251,191,36,0.9)', boxShadow: '0 2px 12px rgba(251,191,36,0.3)' }}>
+              <Zap size={14} />
+              Post {1 + allocs.filter(a => parseFloat(a.amount) > 0 && a.catId).length} Transaction{allocs.filter(a => parseFloat(a.amount) > 0 && a.catId).length !== 0 ? 's' : ''}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Transactions() {
   const { state, dispatch } = useBudget();
   const { transactions, categories, settings, selectedYear, selectedMonth } = state;
   const { currency } = settings;
 
   const [showModal, setShowModal] = useState(false);
+  const [showPaycheck, setShowPaycheck] = useState(false);
   const [editTx, setEditTx] = useState(null);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
@@ -203,6 +408,10 @@ export default function Transactions() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
+          <button className="btn btn-paycheck" onClick={() => setShowPaycheck(true)} title="Post Paycheck">
+            <Zap size={14} />
+            Paycheck
+          </button>
           <button className="btn btn-primary" onClick={() => { setEditTx(null); setShowModal(true); }}>
             <Plus size={14} /> Add
           </button>
@@ -276,8 +485,17 @@ export default function Transactions() {
                         {tx.flagged && <span className="flag-indicator" title="Flagged for review" />}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600, color: tx.type === 'income' ? 'var(--accent-green)' : tx.type === 'savings' ? 'var(--accent-blue)' : 'var(--accent-red)' }}>
-                      {tx.type === 'income' ? '+' : '−'}{fmt(tx.amount, currency)}
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                        <span style={{ fontWeight: 600, color: tx.type === 'income' ? 'var(--accent-green)' : tx.type === 'savings' ? 'var(--accent-blue)' : 'var(--accent-red)' }}>
+                          {tx.type === 'income' ? '+' : '−'}{fmt(tx.amount, currency)}
+                        </span>
+                        {tx.originalCurrency && tx.originalCurrency !== 'USD' && (
+                          <span className="fx-badge">
+                            {tx.originalCurrency} {tx.originalAmount?.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
@@ -301,11 +519,21 @@ export default function Transactions() {
         <TransactionModal
           tx={editTx}
           categories={state.categories}
+          settings={settings}
           onClose={() => { setShowModal(false); setEditTx(null); }}
           onSave={data => {
             if (editTx) dispatch({ type: 'UPDATE_TRANSACTION', tx: { ...editTx, ...data } });
             else dispatch({ type: 'ADD_TRANSACTION', tx: data });
           }}
+        />
+      )}
+
+      {showPaycheck && (
+        <PaycheckModal
+          categories={state.categories}
+          settings={settings}
+          onClose={() => setShowPaycheck(false)}
+          onPost={data => dispatch({ type: 'POST_PAYCHECK', ...data })}
         />
       )}
     </div>

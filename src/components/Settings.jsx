@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useBudget } from '../store.jsx';
-import { Save, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Save, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 
 const CURRENCIES = [
   { code: 'USD', symbol: '$',  name: 'US Dollar'         },
@@ -17,11 +17,247 @@ const CURRENCIES = [
   { code: 'SGD', symbol: '$',  name: 'Singapore Dollar'  },
 ];
 
+const PIN_LEN = 6;
+
+function PinSetup({ pin, onChange }) {
+  const [pinInput, setPinInput] = useState('');
+  const [confirmInput, setConfirmInput] = useState('');
+  const [error, setError] = useState('');
+  const [mode, setMode] = useState('view'); // 'view' | 'set' | 'clear'
+
+  function handleSet() {
+    if (pinInput.length !== PIN_LEN || !/^\d{6}$/.test(pinInput)) {
+      setError('PIN must be exactly 6 digits');
+      return;
+    }
+    if (pinInput !== confirmInput) {
+      setError('PINs do not match');
+      return;
+    }
+    onChange(pinInput);
+    setPinInput('');
+    setConfirmInput('');
+    setError('');
+    setMode('view');
+  }
+
+  function handleClear() {
+    onChange('');
+    setMode('view');
+  }
+
+  if (mode === 'view') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          {pin ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {Array.from({ length: PIN_LEN }).map((_, i) => (
+                <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent-blue)', boxShadow: '0 0 6px var(--accent-blue)' }} />
+              ))}
+              <span style={{ fontSize: 12, color: 'var(--accent-green)', marginLeft: 8, fontWeight: 600 }}>PIN set</span>
+            </div>
+          ) : (
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>No PIN — app is unprotected</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={() => setMode('set')} style={{ fontSize: 12 }}>
+            {pin ? 'Change PIN' : 'Set PIN'}
+          </button>
+          {pin && (
+            <button className="btn btn-danger" onClick={() => setMode('clear')} style={{ fontSize: 12 }}>
+              Remove PIN
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'clear') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Remove PIN protection? The app will be accessible without authentication.</p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={() => setMode('view')}>Cancel</button>
+          <button className="btn btn-danger" onClick={handleClear}>Remove PIN</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="form-group">
+        <label className="form-label">New PIN (6 digits)</label>
+        <input
+          className="form-input"
+          type="number"
+          inputMode="numeric"
+          pattern="\d{6}"
+          placeholder="Enter 6-digit PIN"
+          value={pinInput}
+          onChange={e => { setPinInput(e.target.value.slice(0, 6)); setError(''); }}
+          style={{ letterSpacing: '0.3em', fontWeight: 700 }}
+          autoFocus
+        />
+      </div>
+      <div className="form-group">
+        <label className="form-label">Confirm PIN</label>
+        <input
+          className="form-input"
+          type="number"
+          inputMode="numeric"
+          pattern="\d{6}"
+          placeholder="Re-enter PIN"
+          value={confirmInput}
+          onChange={e => { setConfirmInput(e.target.value.slice(0, 6)); setError(''); }}
+          style={{ letterSpacing: '0.3em', fontWeight: 700 }}
+        />
+      </div>
+      {error && <span style={{ fontSize: 12, color: 'var(--accent-red)' }}>{error}</span>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={() => { setMode('view'); setError(''); setPinInput(''); setConfirmInput(''); }}>Cancel</button>
+        <button className="btn btn-primary" onClick={handleSet}>Set PIN</button>
+      </div>
+    </div>
+  );
+}
+
+function PaycheckConfig({ config, categories, onChange }) {
+  const [cfg, setCfg] = useState({
+    amount: config.amount || 0,
+    incomeCatId: config.incomeCatId || '',
+    allocations: config.allocations || [],
+  });
+
+  const allExpSav = [...categories.expense, ...categories.savings];
+
+  function addAlloc() {
+    setCfg(p => ({ ...p, allocations: [...p.allocations, { catId: '', type: 'expense', pct: 0, label: '' }] }));
+  }
+
+  function setAlloc(idx, field, value) {
+    setCfg(p => {
+      const allocs = p.allocations.map((a, i) => {
+        if (i !== idx) return a;
+        const next = { ...a, [field]: value };
+        if (field === 'catId') {
+          const cat = allExpSav.find(c => c.id === value);
+          next.label = cat?.name || '';
+          next.type = categories.expense.some(c => c.id === value) ? 'expense' : 'savings';
+        }
+        return next;
+      });
+      return { ...p, allocations: allocs };
+    });
+  }
+
+  function removeAlloc(idx) {
+    setCfg(p => ({ ...p, allocations: p.allocations.filter((_, i) => i !== idx) }));
+  }
+
+  function save() {
+    onChange({ ...cfg, amount: parseFloat(cfg.amount) || 0, allocations: cfg.allocations.map(a => ({ ...a, pct: parseFloat(a.pct) || 0 })) });
+  }
+
+  const totalPct = cfg.allocations.reduce((s, a) => s + (parseFloat(a.pct) || 0), 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="grid-2">
+        <div className="form-group">
+          <label className="form-label">Default Paycheck Amount</label>
+          <input
+            className="form-input"
+            type="number"
+            min="0"
+            step="any"
+            placeholder="0.00"
+            value={cfg.amount}
+            onChange={e => setCfg(p => ({ ...p, amount: e.target.value }))}
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Income Category</label>
+          <select className="form-select" value={cfg.incomeCatId} onChange={e => setCfg(p => ({ ...p, incomeCatId: e.target.value }))}>
+            <option value="">Select category…</option>
+            {categories.income.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <label className="form-label" style={{ margin: 0 }}>Allocation Rules</label>
+          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '5px 10px' }} onClick={addAlloc}>
+            <Plus size={12} /> Add
+          </button>
+        </div>
+
+        {cfg.allocations.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 0' }}>
+            No allocations — the Post Paycheck modal will just create an income transaction.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {cfg.allocations.map((a, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <select
+                className="form-select"
+                style={{ flex: 1 }}
+                value={a.catId}
+                onChange={e => setAlloc(i, 'catId', e.target.value)}
+              >
+                <option value="">Select category…</option>
+                <optgroup label="Expenses">
+                  {categories.expense.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </optgroup>
+                <optgroup label="Savings">
+                  {categories.savings.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </optgroup>
+              </select>
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                style={{ width: 80, textAlign: 'right' }}
+                value={a.pct}
+                onChange={e => setAlloc(i, 'pct', e.target.value)}
+                placeholder="%"
+              />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 16 }}>%</span>
+              <button className="delete-btn" onClick={() => removeAlloc(i)}><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+
+        {cfg.allocations.length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 12, display: 'flex', gap: 8 }}>
+            <span style={{ color: 'var(--text-muted)' }}>Total:</span>
+            <strong style={{ color: totalPct > 100 ? 'var(--accent-red)' : totalPct === 100 ? 'var(--accent-green)' : 'var(--accent-yellow)' }}>
+              {totalPct.toFixed(1)}%
+            </strong>
+            {totalPct > 100 && <span style={{ color: 'var(--accent-red)' }}>Exceeds 100%</span>}
+          </div>
+        )}
+      </div>
+
+      <button className="btn btn-primary" onClick={save} style={{ alignSelf: 'flex-start' }}>
+        Save Paycheck Config
+      </button>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { state, dispatch } = useBudget();
-  const { settings } = state;
+  const { settings, categories } = state;
   const [saved, setSaved] = useState(false);
-  const [showPwd, setShowPwd] = useState(false);
 
   const [form, setForm] = useState({
     startYear:       settings.startYear,
@@ -30,7 +266,6 @@ export default function Settings() {
     savingsRateMode: settings.savingsRateMode,
     shiftLateIncome: settings.shiftLateIncome,
     shiftDay:        settings.shiftDay,
-    password:        settings.password || '',
   });
 
   function set(field, value) { setForm(prev => ({ ...prev, [field]: value })); }
@@ -58,7 +293,7 @@ export default function Settings() {
 
   return (
     <div className="page-body">
-      <div style={{ maxWidth: 600, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* General */}
         <div className="card">
@@ -80,31 +315,17 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Security */}
+        {/* Security — PIN */}
         <div className="card">
-          <div className="card-title">Security</div>
-          <div className="form-group">
-            <label className="form-label">App Password</label>
-            <div style={{ position: 'relative' }}>
-              <input
-                className="form-input"
-                type={showPwd ? 'text' : 'password'}
-                style={{ paddingRight: 40 }}
-                placeholder="Leave empty to disable password protection"
-                value={form.password}
-                onChange={e => set('password', e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPwd(s => !s)}
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}
-              >
-                {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
+          <div className="card-title">Security — PIN Lock</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              When set, a login screen appears on every page load. Leave empty to disable.
+              A 6-digit PIN is required on every page load. Session is in-memory only — refreshing always requires re-authentication.
             </span>
+            <PinSetup
+              pin={settings.pin}
+              onChange={pin => dispatch({ type: 'UPDATE_SETTINGS', settings: { pin } })}
+            />
           </div>
         </div>
 
@@ -167,7 +388,20 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Save */}
+        {/* Paycheck Config */}
+        <div className="card">
+          <div className="card-title">Paycheck Configuration</div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, display: 'block' }}>
+            Pre-configure paycheck amounts and split percentages. These pre-fill the "Post Paycheck" button in Transactions.
+          </span>
+          <PaycheckConfig
+            config={settings.paycheckConfig}
+            categories={categories}
+            onChange={cfg => dispatch({ type: 'UPDATE_SETTINGS', settings: { paycheckConfig: cfg } })}
+          />
+        </div>
+
+        {/* Save general settings */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <button className="btn btn-primary" onClick={save}>
             <Save size={14} />
@@ -183,7 +417,7 @@ export default function Settings() {
             Danger Zone
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
-            Permanently deletes all budget data, transactions, subscriptions, and custom categories. Cannot be undone.
+            Permanently deletes all budget data, transactions, subscriptions, portfolio, and custom categories. Cannot be undone.
           </p>
           <button className="btn btn-danger" onClick={resetData}>Reset All Data</button>
         </div>
