@@ -81,10 +81,7 @@ function loadState() {
       },
     };
 
-    // Migrate password → pin
-    if (savedSettings.password && !savedSettings.pin) {
-      mergedSettings.pin = savedSettings.password;
-    }
+    // Drop old password field — don't migrate (passwords ≠ 6-digit PINs)
     delete mergedSettings.password;
 
     return {

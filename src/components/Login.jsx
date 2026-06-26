@@ -85,6 +85,18 @@ export default function Login() {
             </div>
           ))}
         </div>
+
+        <button
+          style={{ marginTop: 20, fontSize: 12, color: 'var(--text-muted)', textDecoration: 'underline', textUnderlineOffset: 3 }}
+          onClick={() => {
+            if (window.confirm('Reset app? This will delete ALL data including your PIN, transactions, and budget. This cannot be undone.')) {
+              localStorage.removeItem('budgetmanager_v1');
+              window.location.reload();
+            }
+          }}
+        >
+          Forgot PIN / Reset App
+        </button>
       </div>
     </div>
   );
