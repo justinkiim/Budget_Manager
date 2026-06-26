@@ -1,20 +1,24 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BudgetProvider, useBudget, MONTHS } from './store.jsx';
 import Dashboard from './components/Dashboard';
 import BudgetPlanning from './components/BudgetPlanning';
 import Transactions from './components/Transactions';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
+import Subscriptions from './components/Subscriptions';
+import Login from './components/Login';
 import {
   LayoutDashboard, CalendarDays, Receipt, BarChart3,
-  Settings as SettingsIcon, DollarSign, ChevronLeft, ChevronRight, Menu, X
+  Settings as SettingsIcon, DollarSign, ChevronLeft, ChevronRight,
+  Menu, X, Sun, Moon, CreditCard
 } from 'lucide-react';
 
 const VIEWS = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'planning', label: 'Budget Planning', icon: CalendarDays },
-  { id: 'transactions', label: 'Transactions', icon: Receipt },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'dashboard',     label: 'Dashboard',       icon: LayoutDashboard },
+  { id: 'planning',      label: 'Budget Planning',  icon: CalendarDays    },
+  { id: 'transactions',  label: 'Transactions',     icon: Receipt         },
+  { id: 'subscriptions', label: 'Subscriptions',    icon: CreditCard      },
+  { id: 'reports',       label: 'Reports',          icon: BarChart3       },
 ];
 
 function YearMonthSelector() {
@@ -24,52 +28,63 @@ function YearMonthSelector() {
   function prevYear() { dispatch({ type: 'SET_YEAR', year: selectedYear - 1 }); }
   function nextYear() { dispatch({ type: 'SET_YEAR', year: selectedYear + 1 }); }
   function prevMonth() {
-    if (selectedMonth === 0) {
-      dispatch({ type: 'SET_MONTH', month: 11 });
-      dispatch({ type: 'SET_YEAR', year: selectedYear - 1 });
-    } else {
-      dispatch({ type: 'SET_MONTH', month: selectedMonth - 1 });
-    }
+    if (selectedMonth === 0) { dispatch({ type: 'SET_MONTH', month: 11 }); dispatch({ type: 'SET_YEAR', year: selectedYear - 1 }); }
+    else dispatch({ type: 'SET_MONTH', month: selectedMonth - 1 });
   }
   function nextMonth() {
-    if (selectedMonth === 11) {
-      dispatch({ type: 'SET_MONTH', month: 0 });
-      dispatch({ type: 'SET_YEAR', year: selectedYear + 1 });
-    } else {
-      dispatch({ type: 'SET_MONTH', month: selectedMonth + 1 });
-    }
+    if (selectedMonth === 11) { dispatch({ type: 'SET_MONTH', month: 0 }); dispatch({ type: 'SET_YEAR', year: selectedYear + 1 }); }
+    else dispatch({ type: 'SET_MONTH', month: selectedMonth + 1 });
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-      {/* Year */}
-      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-        <button onClick={prevYear} style={{ padding: '6px 8px', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
-          <ChevronLeft size={14} />
-        </button>
-        <span style={{ padding: '6px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', minWidth: 44, textAlign: 'center' }}>{selectedYear}</span>
-        <button onClick={nextYear} style={{ padding: '6px 8px', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
-          <ChevronRight size={14} />
-        </button>
+    <div className="period-selector">
+      <div className="period-control">
+        <button className="period-btn" onClick={prevYear}><ChevronLeft size={14} /></button>
+        <span className="period-label">{selectedYear}</span>
+        <button className="period-btn" onClick={nextYear}><ChevronRight size={14} /></button>
       </div>
-      {/* Month */}
-      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-        <button onClick={prevMonth} style={{ padding: '6px 8px', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
-          <ChevronLeft size={14} />
-        </button>
-        <span style={{ padding: '6px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', minWidth: 36, textAlign: 'center' }}>{MONTHS[selectedMonth]}</span>
-        <button onClick={nextMonth} style={{ padding: '6px 8px', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
-          <ChevronRight size={14} />
-        </button>
+      <div className="period-control">
+        <button className="period-btn" onClick={prevMonth}><ChevronLeft size={14} /></button>
+        <span className="period-label">{MONTHS[selectedMonth]}</span>
+        <button className="period-btn" onClick={nextMonth}><ChevronRight size={14} /></button>
       </div>
     </div>
   );
 }
 
+function YearSelector() {
+  const { state, dispatch } = useBudget();
+  const { selectedYear } = state;
+  return (
+    <div className="period-selector">
+      <div className="period-control">
+        <button className="period-btn" onClick={() => dispatch({ type: 'SET_YEAR', year: selectedYear - 1 })}><ChevronLeft size={14} /></button>
+        <span className="period-label">{selectedYear}</span>
+        <button className="period-btn" onClick={() => dispatch({ type: 'SET_YEAR', year: selectedYear + 1 })}><ChevronRight size={14} /></button>
+      </div>
+    </div>
+  );
+}
+
+const PAGE_SUBTITLES = {
+  dashboard:     'Overview of your financial health',
+  planning:      'Set monthly allocations — aim for zero remaining',
+  transactions:  'Log and track all income, expenses & savings',
+  subscriptions: 'Manage recurring payments — auto-log when paid',
+  reports:       'Annual analysis & category breakdowns',
+};
+
 function AppInner() {
   const { state, dispatch } = useBudget();
-  const { currentView } = state;
+  const { currentView, isAuthenticated, settings } = state;
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
+  }, [settings.theme]);
+
+  const needsAuth = settings.password && settings.password.trim() !== '' && !isAuthenticated;
+  if (needsAuth) return <Login />;
 
   const view = VIEWS.find(v => v.id === currentView) || VIEWS[0];
 
@@ -78,18 +93,13 @@ function AppInner() {
     setSidebarOpen(false);
   }
 
-  const showPeriod = ['dashboard', 'transactions', 'reports'].includes(currentView);
-  const showMonthSelector = ['dashboard', 'transactions'].includes(currentView);
+  const showYearMonth = ['dashboard', 'transactions'].includes(currentView);
+  const showYearOnly  = ['planning', 'reports'].includes(currentView);
 
   return (
     <div className="app-layout">
-      {/* Sidebar overlay (mobile) */}
-      <div
-        className={`sidebar-overlay ${sidebarOpen ? 'visible' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      />
+      <div className={`sidebar-overlay ${sidebarOpen ? 'visible' : ''}`} onClick={() => setSidebarOpen(false)} />
 
-      {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
@@ -99,6 +109,7 @@ function AppInner() {
             <span>Budget Manager</span>
           </div>
         </div>
+
         <nav className="sidebar-nav">
           <span className="nav-section-label">Navigation</span>
           {VIEWS.map(v => {
@@ -123,12 +134,19 @@ function AppInner() {
             Settings
           </button>
         </nav>
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)' }}>
-          Zero-Based Budget Tracker
+
+        <div className="sidebar-footer">
+          <span className="sidebar-footer-text">Zero-Based Budget</span>
+          <button
+            className="theme-toggle-btn"
+            onClick={() => dispatch({ type: 'TOGGLE_THEME' })}
+            title={settings.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {settings.theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
         </div>
       </aside>
 
-      {/* Main content */}
       <main className="main-content">
         <header className="page-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -137,30 +155,19 @@ function AppInner() {
             </button>
             <div>
               <div className="page-title">{view?.label || 'Settings'}</div>
-              {currentView === 'planning' && (
-                <div className="page-subtitle">Set your monthly budget allocations — aim for zero remaining</div>
-              )}
-              {currentView === 'dashboard' && (
-                <div className="page-subtitle">Overview of your financial health</div>
-              )}
-              {currentView === 'transactions' && (
-                <div className="page-subtitle">Log and track all income, expenses & savings</div>
-              )}
-              {currentView === 'reports' && (
-                <div className="page-subtitle">Annual analysis & category breakdowns</div>
-              )}
+              <div className="page-subtitle">{PAGE_SUBTITLES[currentView] || ''}</div>
             </div>
           </div>
-          {showPeriod && (
-            <YearMonthSelector />
-          )}
+          {showYearMonth && <YearMonthSelector />}
+          {showYearOnly  && <YearSelector />}
         </header>
 
-        {currentView === 'dashboard' && <Dashboard />}
-        {currentView === 'planning' && <BudgetPlanning />}
-        {currentView === 'transactions' && <Transactions />}
-        {currentView === 'reports' && <Reports />}
-        {currentView === 'settings' && <Settings />}
+        {currentView === 'dashboard'     && <Dashboard />}
+        {currentView === 'planning'      && <BudgetPlanning />}
+        {currentView === 'transactions'  && <Transactions />}
+        {currentView === 'subscriptions' && <Subscriptions />}
+        {currentView === 'reports'       && <Reports />}
+        {currentView === 'settings'      && <Settings />}
       </main>
     </div>
   );

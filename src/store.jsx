@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useEffect } from 'react';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function makeDefaultCategories() {
   return {
@@ -33,28 +33,26 @@ function makeDefaultCategories() {
   };
 }
 
-// budget[year][catId][month] = number
-function makeEmptyBudget() { return {}; }
-
 function defaultState() {
   return {
     settings: {
       startYear: new Date().getFullYear(),
       currency: '$',
       currencyCode: 'USD',
-      savingsRateMode: 'savings', // 'savings' or 'passive'
+      savingsRateMode: 'savings',
       shiftLateIncome: false,
       shiftDay: 20,
+      password: '',
+      theme: 'dark',
     },
     categories: makeDefaultCategories(),
-    // budget[year][catId][monthIndex 0-11] = number
-    budget: makeEmptyBudget(),
-    // transactions: [{id, date, type, catId, amount, details}]
+    budget: {},
     transactions: [],
-    // ui state (not persisted)
+    subscriptions: [],
     currentView: 'dashboard',
     selectedYear: new Date().getFullYear(),
     selectedMonth: new Date().getMonth(),
+    isAuthenticated: false,
   };
 }
 
@@ -70,6 +68,7 @@ function loadState() {
       currentView: 'dashboard',
       selectedYear: saved.selectedYear || def.selectedYear,
       selectedMonth: saved.selectedMonth !== undefined ? saved.selectedMonth : def.selectedMonth,
+      isAuthenticated: false,
     };
   } catch {
     return defaultState();
@@ -77,7 +76,7 @@ function loadState() {
 }
 
 function saveState(state) {
-  const { currentView, ...persist } = state;
+  const { currentView, isAuthenticated, ...persist } = state;
   localStorage.setItem('budgetmanager_v1', JSON.stringify(persist));
 }
 
@@ -85,16 +84,18 @@ function reducer(state, action) {
   switch (action.type) {
     case 'SET_VIEW':
       return { ...state, currentView: action.view };
-
     case 'SET_YEAR':
       return { ...state, selectedYear: action.year };
-
     case 'SET_MONTH':
       return { ...state, selectedMonth: action.month };
-
+    case 'AUTHENTICATE':
+      return { ...state, isAuthenticated: true };
+    case 'TOGGLE_THEME': {
+      const theme = state.settings.theme === 'dark' ? 'light' : 'dark';
+      return { ...state, settings: { ...state.settings, theme } };
+    }
     case 'UPDATE_SETTINGS':
       return { ...state, settings: { ...state.settings, ...action.settings } };
-
     case 'SET_BUDGET': {
       const { year, catId, month, value } = action;
       const budget = JSON.parse(JSON.stringify(state.budget));
@@ -103,7 +104,6 @@ function reducer(state, action) {
       budget[year][catId][month] = value;
       return { ...state, budget };
     }
-
     case 'ADD_CATEGORY': {
       const { section, name } = action;
       const cats = JSON.parse(JSON.stringify(state.categories));
@@ -111,14 +111,12 @@ function reducer(state, action) {
       cats[section].push({ id, name, custom: true });
       return { ...state, categories: cats };
     }
-
     case 'REMOVE_CATEGORY': {
       const { section, id } = action;
       const cats = JSON.parse(JSON.stringify(state.categories));
       cats[section] = cats[section].filter(c => c.id !== id);
       return { ...state, categories: cats };
     }
-
     case 'RENAME_CATEGORY': {
       const { section, id, name } = action;
       const cats = JSON.parse(JSON.stringify(state.categories));
@@ -126,23 +124,48 @@ function reducer(state, action) {
       if (cat) cat.name = name;
       return { ...state, categories: cats };
     }
-
     case 'ADD_TRANSACTION': {
-      const tx = { ...action.tx, id: Date.now().toString() };
+      const tx = { flagged: false, ...action.tx, id: Date.now().toString() };
       return { ...state, transactions: [tx, ...state.transactions] };
     }
-
     case 'UPDATE_TRANSACTION': {
       const txs = state.transactions.map(t =>
         t.id === action.tx.id ? { ...t, ...action.tx } : t
       );
       return { ...state, transactions: txs };
     }
-
-    case 'DELETE_TRANSACTION': {
+    case 'DELETE_TRANSACTION':
       return { ...state, transactions: state.transactions.filter(t => t.id !== action.id) };
+    case 'ADD_SUBSCRIPTION': {
+      const sub = { lastPaidDate: null, active: true, color: '#60a5fa', ...action.sub, id: Date.now().toString() };
+      return { ...state, subscriptions: [...state.subscriptions, sub] };
     }
-
+    case 'UPDATE_SUBSCRIPTION':
+      return {
+        ...state,
+        subscriptions: state.subscriptions.map(s => s.id === action.sub.id ? { ...s, ...action.sub } : s),
+      };
+    case 'DELETE_SUBSCRIPTION':
+      return { ...state, subscriptions: state.subscriptions.filter(s => s.id !== action.id) };
+    case 'PAY_SUBSCRIPTION': {
+      const sub = state.subscriptions.find(s => s.id === action.id);
+      if (!sub) return state;
+      const today = new Date().toISOString().slice(0, 10);
+      const tx = {
+        id: Date.now().toString(),
+        date: today,
+        type: 'expense',
+        catId: sub.catId,
+        amount: sub.cost,
+        details: sub.name,
+        flagged: false,
+        fromSubscription: sub.id,
+      };
+      const subscriptions = state.subscriptions.map(s =>
+        s.id === action.id ? { ...s, lastPaidDate: today } : s
+      );
+      return { ...state, transactions: [tx, ...state.transactions], subscriptions };
+    }
     default:
       return state;
   }
@@ -152,11 +175,7 @@ const BudgetContext = createContext(null);
 
 export function BudgetProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadState);
-
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
-
+  useEffect(() => { saveState(state); }, [state]);
   return (
     <BudgetContext.Provider value={{ state, dispatch }}>
       {children}
@@ -168,26 +187,19 @@ export function useBudget() {
   return useContext(BudgetContext);
 }
 
-// Helpers
-export { MONTHS };
-
 export function getBudgetValue(budget, year, catId, month) {
   return budget?.[year]?.[catId]?.[month] ?? 0;
 }
 
 export function getCatBudgetTotal(budget, year, catId) {
   let total = 0;
-  for (let m = 0; m < 12; m++) {
-    total += getBudgetValue(budget, year, catId, m);
-  }
+  for (let m = 0; m < 12; m++) total += getBudgetValue(budget, year, catId, m);
   return total;
 }
 
 export function getSectionTotal(budget, year, cats, month) {
   let total = 0;
-  for (const cat of cats) {
-    total += getBudgetValue(budget, year, cat.id, month);
-  }
+  for (const cat of cats) total += getBudgetValue(budget, year, cat.id, month);
   return total;
 }
 
@@ -217,10 +229,7 @@ export function getTransactionsByMonth(transactions, year, month) {
 }
 
 export function getTransactionsByYear(transactions, year) {
-  return transactions.filter(tx => {
-    const d = new Date(tx.date);
-    return d.getFullYear() === year;
-  });
+  return transactions.filter(tx => new Date(tx.date).getFullYear() === year);
 }
 
 export function getActualByCategory(transactions, year, month, catId) {
@@ -232,8 +241,22 @@ export function getActualByCategory(transactions, year, month, catId) {
 
 export function getActualSectionTotal(transactions, year, month, cats) {
   let total = 0;
-  for (const cat of cats) {
-    total += getActualByCategory(transactions, year, month, cat.id);
-  }
+  for (const cat of cats) total += getActualByCategory(transactions, year, month, cat.id);
   return total;
+}
+
+export function isSubPaidThisCycle(sub) {
+  if (!sub.lastPaidDate) return false;
+  const paid = new Date(sub.lastPaidDate + 'T12:00:00');
+  const now = new Date();
+  if (sub.cycle === 'monthly') {
+    return paid.getFullYear() === now.getFullYear() && paid.getMonth() === now.getMonth();
+  }
+  if (sub.cycle === 'annual') {
+    return paid.getFullYear() === now.getFullYear();
+  }
+  if (sub.cycle === 'weekly') {
+    return (now - paid) / (1000 * 60 * 60 * 24) < 7;
+  }
+  return false;
 }
